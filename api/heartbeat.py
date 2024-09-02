@@ -1,0 +1,138 @@
+import json
+import logging
+import time
+import uuid
+
+import redis
+from flask import Flask, jsonify, request
+
+
+class SessionQueue:
+    def __init__(self, redis_url="redis://localhost:6379", max_session=3):
+        self.redis_client = redis.StrictRedis.from_url(redis_url)
+        self.max_session = max_session
+
+    def _acquire_lock(self, lock_name, expire_time=10000):
+        identifier = str(uuid.uuid4())
+        if self.redis_client.set(lock_name, identifier, nx=True, px=expire_time):
+            return identifier
+        return None
+
+    def _release_lock(self, lock_name, identifier):
+        lock_value = self.redis_client.get(lock_name)
+        if lock_value and lock_value.decode("utf-8") == identifier:
+            self.redis_client.delete(lock_name)
+            return True
+        return False
+
+    def add_queue(self, user_id, session_id):
+        timestamp = int(time.time())
+        lock_key = f"{user_id}_lock"
+        lock_id = self._acquire_lock(lock_key)
+
+        if lock_id:
+            try:
+                queue_key = f"{user_id}_queue"
+                queue = self.redis_client.lrange(queue_key, 0, -1)
+
+                if len(queue) >= self.max_session:
+                    reject_element = self.redis_client.lpop(queue_key)
+                    logging.info(f"Removed element: {reject_element}")
+
+                session_data = json.dumps(
+                    {"SessionID": session_id, "Timestamp": timestamp}
+                )
+                self.redis_client.rpush(queue_key, session_data)
+
+                return {
+                    "message": f"Added session: {session_id} with timestamp {timestamp}"
+                }, 200
+            finally:
+                self._release_lock(lock_key, lock_id)
+        else:
+            return {"error": "Failed to acquire lock"}, 500
+
+    def update_queue(self, user_id, session_id):
+        timestamp = int(time.time())
+        lock_key = f"{user_id}_lock"
+        lock_id = self._acquire_lock(lock_key)
+
+        if lock_id:
+            try:
+                queue_key = f"{user_id}_queue"
+                queue = self.redis_client.lrange(queue_key, 0, -1)
+                session_found = False
+
+                for session_data in queue:
+                    session = json.loads(session_data)
+                    if session["SessionID"] == session_id:
+                        self.redis_client.lrem(queue_key, 1, session_data)
+                        session_found = True
+                        break
+
+                if not session_found:
+                    return {"error": f"Session {session_id} not found"}, 403
+
+                session_data = json.dumps(
+                    {"SessionID": session_id, "Timestamp": timestamp}
+                )
+                self.redis_client.rpush(queue_key, session_data)
+                logging.info(f"Updated element: {session_data}")
+                return {
+                    "message": f"Updated session: {session_id} (timestamp {timestamp})"
+                }, 200
+            finally:
+                self._release_lock(lock_key, lock_id)
+        else:
+            return {"error": "Failed to acquire lock"}, 500
+
+
+class HeartBeatServer:
+    def __init__(self, session_queue, host="0.0.0.0", port=5000, debug=True):
+        self.app = Flask(__name__)
+        self.app.logger.setLevel(logging.INFO)
+        self.session_queue = session_queue
+        self.host = host
+        self.port = port
+        self.debug = debug
+        self._setup_routes()
+
+    def _setup_routes(self):
+        self.app.add_url_rule(
+            "/add_queue", "add_queue", self._handle_add_queue, methods=["POST"]
+        )
+        self.app.add_url_rule(
+            "/update_queue", "update_queue", self._handle_update_queue, methods=["POST"]
+        )
+        self.app.add_url_rule(
+            "/healthcheck", "health_check", self._handle_health_check, methods=["GET"]
+        )
+
+    def _handle_add_queue(self):
+        user_id = request.json.get("user_id")
+        session_id = request.json.get("session_id")
+        response, status = self.session_queue.add_queue(user_id, session_id)
+        return jsonify(response), status
+
+    def _handle_update_queue(self):
+        user_id = request.json.get("user_id")
+        session_id = request.json.get("session_id")
+        response, status = self.session_queue.update_queue(user_id, session_id)
+        return jsonify(response), status
+
+    def _handle_health_check(self):
+        return jsonify({"status": "healthy"}), 200
+
+    def run(self):
+        self.app.run(host=self.host, port=self.port, debug=self.debug)
+
+
+if __name__ == "__main__":
+    # セッションキューをセットアップ
+    session_queue = SessionQueue(redis_url="redis://redis.local:6379", max_session=3)
+
+    # HeartBeatサーバーをセットアップ
+    server = HeartBeatServer(session_queue)
+
+    # サーバーを起動
+    server.run()

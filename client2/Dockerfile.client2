@@ -1,0 +1,14 @@
+# Use a slim Python image
+FROM python:3.9-slim
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the client script into the container
+COPY client_script.py /app/
+
+# Install the requests module
+RUN pip install requests logger
+
+# Default command to run the client script
+CMD ["python", "/app/client_script.py"]
