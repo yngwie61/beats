@@ -1,2 +1,7 @@
 redis
 flask
+flask_cors
+requests
+logger
+jwcrypto
+pyjwt

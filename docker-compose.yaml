@@ -15,7 +15,7 @@ services:
       context: ./api
       dockerfile: Dockerfile.api
     ports:
-      - "5000:5000"
+      - "7777:7777"
     environment:
       - FLASK_ENV=development
     depends_on:
@@ -26,42 +26,16 @@ services:
           - beat.local
 
   client:
-    image: curlimages/curl:latest
-    container_name: curl-client
-    depends_on:
-      - beat
-      - redis
-    networks:
-      default:
-    entrypoint: >
-      sh -c '
-        echo "Attempt $i";
-        curl "http://beat:5000/healthcheck";
-        curl "http://beat:5000/add_queue?user_id=user1&session_id=11";
-        curl "http://beat:5000/add_queue?user_id=user1&session_id=12";
-        curl "http://beat:5000/add_queue?user_id=user1&session_id=13";
-        curl "http://beat:5000/update_queue?user_id=user1&session_id=11";
-        curl "http://beat:5000/update_queue?user_id=user1&session_id=11";
-        curl "http://beat:5000/update_queue?user_id=user1&session_id=11";  
-        curl "http://beat:5000/update_queue?user_id=user1&session_id=11";
-        curl "http://beat:5000/update_queue?user_id=user2&session_id=11";
-        curl "http://beat:5000/add_queue?user_id=user1&session_id=14";
-        curl "http://beat:5000/add_queue?user_id=user1&session_id=15";
-      '
-
-  client2:
     build:
-      context: ./client2
-      dockerfile: Dockerfile.client2
-    container_name: client2
-    depends_on:
-      - client
+      context: ./client
+      dockerfile: Dockerfile.client
+    container_name: client
     volumes:
-      - ./client2:/app
+      - ./client:/app
     networks:
       default:
         aliases:
-          - client2.local
+          - client.local
 
 networks:
   default:

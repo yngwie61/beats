@@ -6,7 +6,7 @@ import time
 import requests
 
 # Number of threads
-THREAD_COUNT = 100
+THREAD_COUNT = 3
 
 # Target URL
 url_add = "http://beat.local:5000/add_queue"
